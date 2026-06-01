@@ -15,24 +15,20 @@ TOKEN = "8834703546:AAHy2MZwD2BaA2j-apTaSKC1qMl6kg8-UgY"
 CHAT_ID = "8108131641"
 
 def send_telegram_text(text):
-    """Надсилає звичайне текстове повідомлення (для сповіщення про старт)"""
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         requests.post(url, data={"chat_id": CHAT_ID, "text": text}, timeout=15)
     except Exception as e:
-        print("TELEGRAM TEXT ERROR:", e)
+        print("TELEGRAM TEXT ERROR:", e, flush=True)
 
 
 def send_signal_to_telegram(caption, coin):
-    """Надсилає фото КАРТИ разом із красивим текстом та інлайн-кнопками під ним"""
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
         
-        # Динамічні посилання на торгові пари для кнопок
         mexc_url = f"https://www.mexc.com/exchange/{coin}_USDT"
         bingx_url = f"https://bingx.com/spot/{coin}USDT"
         
-        # Створення структури кнопок, як на твоєму скріншоті
         reply_markup = {
             "inline_keyboard": [
                 [{"text": "Биржа MEXC ↗", "url": mexc_url}],
@@ -53,23 +49,22 @@ def send_signal_to_telegram(caption, coin):
                 timeout=30
             )
     except Exception as e:
-        print("TELEGRAM SIGNAL ERROR:", e)
+        print("TELEGRAM SIGNAL ERROR:", e, flush=True)
 
 
 # ======================
 # EXCHANGE CONFIG
 # ======================
 bingx = ccxt.bingx({
-    "enableRateLimit": True
+    "enableRateLimit": True,
+    "timeout": 15000  # 👈 Захист від зависання: таймаут 15 секунд
 })
 
-# Твій повний список монет[cite: 2]
 COINS = [
     "BTC", "ETH", "SOL", "HYPE", "LINK", "DOGE", "XRP", "NEAR", 
     "TAO", "ZEC", "LTC", "AAVE", "RIVER", "AVAX", "INJ", "WLD", "WIF", "XLM"
 ]
 
-# Налаштування відповідності таймфреймів для обох бірж
 TIMEFRAMES = {
     "1H": {"mexc": "60m", "bingx": "1h"},
     "2H": {"mexc": "2h",  "bingx": "2h"},
@@ -102,7 +97,7 @@ def get_mexc_ohlcv(symbol, interval, limit=100):
         df.set_index("time", inplace=True)
         return df
     except Exception as e:
-        print(f"MEXC ERROR ({symbol}):", e)
+        print(f"MEXC ERROR ({symbol}):", e, flush=True)
         return None
 
 
@@ -117,7 +112,7 @@ def get_bingx_ohlcv(symbol, tf, limit=100):
         df.set_index("time", inplace=True)
         return df
     except Exception as e:
-        print(f"BINGX ERROR ({symbol}):", e)
+        print(f"BINGX ERROR ({symbol}):", e, flush=True)
         return None
 
 
@@ -141,11 +136,10 @@ def make_chart(df, level):
         add_plot = mpf.make_addplot([level] * len(df), color="red")
         mpf.plot(df, type="candle", style="charles", addplot=add_plot, volume=True, savefig="chart.png")
     except Exception as e:
-        print("CHART ERROR:", e)
+        print("CHART ERROR:", e, flush=True)
 
 
 def format_price(val):
-    """Красиво форматує ціну залежно від її розміру (для щиткоїнів та бітка)"""
     if val >= 100: return f"{val:.2f}"
     if val >= 1: return f"{val:.4f}"
     return f"{val:.6f}".rstrip('0').rstrip('.')
@@ -167,12 +161,12 @@ def scan_exchange(exchange_name, df, coin, tf_name):
     vol = volume_ok(df)
     rejection = df["close"].iloc[-1] < df["open"].iloc[-1]
 
-    print(exchange_name, coin, tf_name, f"Price: {price}", f"Level: {level}", f"Touch: {touch}")
+    # 👇 ТУТ ДОДАНО flush=True ДЛЯ МИТТЄВОГО ВІДОБРАЖЕННЯ В КОНСОЛІ
+    print(exchange_name, coin, tf_name, f"Price: {price}", f"Level: {level}", f"Touch: {touch}", flush=True)
 
     if touch and vol and rejection:
         make_chart(df, level)
         
-        # Форматуємо вигляд повідомлення під твій стиль зі скріншоту
         p_str = format_price(price)
         l_str = format_price(level)
         
@@ -182,7 +176,6 @@ def scan_exchange(exchange_name, df, coin, tf_name):
             f"Цена: {p_str}"
         )
         
-        # Надсилаємо все разом (Фото + Текст + Кнопки)
         send_signal_to_telegram(caption, coin)
 
 
@@ -203,7 +196,6 @@ def main():
             bingx_df = get_bingx_ohlcv(bingx_symbol, tf_modes["bingx"])
             scan_exchange("🔵 BINGX", bingx_df, coin, tf_name)
 
-            # Коротка пауза, щоб уникнути спам-блокувань від API бірж
             time.sleep(0.5)
 
 
@@ -212,11 +204,11 @@ def bot_loop():
 
     while True:
         try:
-            print("SCAN START")
+            print("SCAN START", flush=True) # 👈 Миттєвий принт
             main()
-            print("SCAN END")
+            print("SCAN END", flush=True)   # 👈 Миттєвий принт
         except Exception as e:
-            print("LOOP ERROR:", e)
+            print("LOOP ERROR:", e, flush=True)
         
         time.sleep(300)
 
