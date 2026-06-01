@@ -2,3 +2,6 @@ requests
 ccxt
 pandas
 mplfinance
+matplotlib
+flask
+gunicorn
