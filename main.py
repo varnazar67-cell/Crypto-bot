@@ -11,8 +11,8 @@ from flask import Flask
 # TELEGRAM
 # ======================
 
-TOKEN = os.getenv("8834703546:AAHy2MZwD2BaA2j-apTaSKC1qMl6kg8-UgY")
-CHAT_ID = os.getenv("8108131641")
+TOKEN = "8834703546:AAHy2MZwD2BaA2j-apTaSKC1qMl6kg8-UgY"
+CHAT_ID = "8108131641"
 
 def send_telegram(text):
     try:
