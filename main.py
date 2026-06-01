@@ -5,41 +5,55 @@ import pandas as pd
 import mplfinance as mpf
 import time
 import threading
+import json
 from flask import Flask
 
 # ======================
-# TELEGRAM
+# TELEGRAM CONFIG
 # ======================
 TOKEN = "8834703546:AAHy2MZwD2BaA2j-apTaSKC1qMl6kg8-UgY"
 CHAT_ID = "8108131641"
 
-def send_telegram(text):
+def send_telegram_text(text):
+    """Надсилає звичайне текстове повідомлення (для сповіщення про старт)"""
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        requests.post(
-            url,
-            data={
-                "chat_id": CHAT_ID,
-                "text": text
-            },
-            timeout=15
-        )
+        requests.post(url, data={"chat_id": CHAT_ID, "text": text}, timeout=15)
     except Exception as e:
-        print("TELEGRAM ERROR:", e)
+        print("TELEGRAM TEXT ERROR:", e)
 
 
-def send_photo():
+def send_signal_to_telegram(caption, coin):
+    """Надсилає фото КАРТИ разом із красивим текстом та інлайн-кнопками під ним"""
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendPhoto"
+        
+        # Динамічні посилання на торгові пари для кнопок
+        mexc_url = f"https://www.mexc.com/exchange/{coin}_USDT"
+        bingx_url = f"https://bingx.com/spot/{coin}USDT"
+        
+        # Створення структури кнопок, як на твоєму скріншоті
+        reply_markup = {
+            "inline_keyboard": [
+                [{"text": "Биржа MEXC ↗", "url": mexc_url}],
+                [{"text": "Биржа BINGX ↗", "url": bingx_url}]
+            ]
+        }
+        
         with open("chart.png", "rb") as f:
             requests.post(
                 url,
-                data={"chat_id": CHAT_ID},
+                data={
+                    "chat_id": CHAT_ID,
+                    "caption": caption,
+                    "parse_mode": "Markdown",
+                    "reply_markup": json.dumps(reply_markup)
+                },
                 files={"photo": f},
                 timeout=30
             )
     except Exception as e:
-        print("PHOTO ERROR:", e)
+        print("TELEGRAM SIGNAL ERROR:", e)
 
 
 # ======================
@@ -49,30 +63,32 @@ bingx = ccxt.bingx({
     "enableRateLimit": True
 })
 
-# 👇 ТВІЙ ОНОВЛЕНИЙ СПИСОК МОНЕТ (УСЬОГО 18 ПОЗИЦІЙ)
+# Твій повний список монет[cite: 2]
 COINS = [
     "BTC", "ETH", "SOL", "HYPE", "LINK", "DOGE", "XRP", "NEAR", 
     "TAO", "ZEC", "LTC", "AAVE", "RIVER", "AVAX", "INJ", "WLD", "WIF", "XLM"
 ]
 
+# Налаштування відповідності таймфреймів для обох бірж
+TIMEFRAMES = {
+    "1H": {"mexc": "60m", "bingx": "1h"},
+    "2H": {"mexc": "2h",  "bingx": "2h"},
+    "4H": {"mexc": "4h",  "bingx": "4h"}
+}
+
 
 # ======================
-# MEXC DATA
+# DATA FETCHERS
 # ======================
-def get_mexc_ohlcv(symbol, interval="60m", limit=100):
+def get_mexc_ohlcv(symbol, interval, limit=100):
     try:
         url = "https://api.mexc.com/api/v3/klines"
         r = requests.get(
             url,
-            params={
-                "symbol": symbol,
-                "interval": interval,
-                "limit": limit
-            },
+            params={"symbol": symbol, "interval": interval, "limit": limit},
             timeout=15
         )
         data = r.json()
-
         if not isinstance(data, list):
             return None
 
@@ -80,48 +96,33 @@ def get_mexc_ohlcv(symbol, interval="60m", limit=100):
         for c in data:
             cleaned.append([c[0], c[1], c[2], c[3], c[4], c[5]])
 
-        df = pd.DataFrame(
-            cleaned,
-            columns=["time", "open", "high", "low", "close", "volume"]
-        )
+        df = pd.DataFrame(cleaned, columns=["time", "open", "high", "low", "close", "volume"])
         df["time"] = pd.to_datetime(df["time"], unit="ms")
         df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "close", "volume"]].astype(float)
         df.set_index("time", inplace=True)
         return df
-
     except Exception as e:
         print(f"MEXC ERROR ({symbol}):", e)
         return None
 
 
-# ======================
-# BINGX DATA
-# ======================
-def get_bingx_ohlcv(symbol, tf="1h"):
+def get_bingx_ohlcv(symbol, tf, limit=100):
     try:
-        data = bingx.fetch_ohlcv(
-            symbol,
-            timeframe=tf,
-            limit=100
-        )
+        data = bingx.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
         if not data:
             return None
 
-        df = pd.DataFrame(
-            data,
-            columns=["time", "open", "high", "low", "close", "volume"]
-        )
+        df = pd.DataFrame(data, columns=["time", "open", "high", "low", "close", "volume"])
         df["time"] = pd.to_datetime(df["time"], unit="ms")
         df.set_index("time", inplace=True)
         return df
-
     except Exception as e:
         print(f"BINGX ERROR ({symbol}):", e)
         return None
 
 
 # ======================
-# STRATEGY LEVELS
+# STRATEGY LOGIC
 # ======================
 def resistance(df):
     if df is None or len(df) < 50:
@@ -135,31 +136,25 @@ def volume_ok(df):
     return df["volume"].iloc[-1] > df["volume"].rolling(20).mean().iloc[-1]
 
 
-# ======================
-# CHART GENERATOR
-# ======================
 def make_chart(df, level):
     try:
-        add_plot = mpf.make_addplot(
-            [level] * len(df),
-            color="red"
-        )
-        mpf.plot(
-            df,
-            type="candle",
-            style="charles",
-            addplot=add_plot,
-            volume=True,
-            savefig="chart.png"
-        )
+        add_plot = mpf.make_addplot([level] * len(df), color="red")
+        mpf.plot(df, type="candle", style="charles", addplot=add_plot, volume=True, savefig="chart.png")
     except Exception as e:
         print("CHART ERROR:", e)
 
 
+def format_price(val):
+    """Красиво форматує ціну залежно від її розміру (для щиткоїнів та бітка)"""
+    if val >= 100: return f"{val:.2f}"
+    if val >= 1: return f"{val:.4f}"
+    return f"{val:.6f}".rstrip('0').rstrip('.')
+
+
 # ======================
-# SCAN LOGIC
+# SCANNER
 # ======================
-def scan_exchange(exchange_name, df, tf_name):
+def scan_exchange(exchange_name, df, coin, tf_name):
     if df is None:
         return
 
@@ -172,45 +167,48 @@ def scan_exchange(exchange_name, df, tf_name):
     vol = volume_ok(df)
     rejection = df["close"].iloc[-1] < df["open"].iloc[-1]
 
-    print(exchange_name, tf_name, f"Price: {price}", f"Level: {level}", f"Touch: {touch}", f"Vol: {vol}", f"Reject: {rejection}")
+    print(exchange_name, coin, tf_name, f"Price: {price}", f"Level: {level}", f"Touch: {touch}")
 
     if touch and vol and rejection:
         make_chart(df, level)
-        send_photo()
-        send_telegram(
-            f"{exchange_name} SIGNAL 🚨\n\n"
-            f"Asset/TF: {tf_name}\n"
-            f"Price: {price:.2f}\n"
-            f"Level: {level:.2f}"
+        
+        # Форматуємо вигляд повідомлення під твій стиль зі скріншоту
+        p_str = format_price(price)
+        l_str = format_price(level)
+        
+        caption = (
+            f"*{coin} ({tf_name})*\n"
+            f"Сопротивление: {l_str}\n"
+            f"Цена: {p_str}"
         )
+        
+        # Надсилаємо все разом (Фото + Текст + Кнопки)
+        send_signal_to_telegram(caption, coin)
 
 
 # ======================
-# MAIN LOOP OVER COINS
+# MAIN LOGIC
 # ======================
 def main():
     for coin in COINS:
-        
-        # 1. Скануємо МЕХС
-        mexc_symbol = f"{coin}USDT"
-        mexc_df = get_mexc_ohlcv(symbol=mexc_symbol, interval="60m")
-        scan_exchange("🔴 MEXC", mexc_df, f"{coin} (1H)")
+        for tf_name, tf_modes in TIMEFRAMES.items():
+            
+            # 1. Сканування MEXC
+            mexc_symbol = f"{coin}USDT"
+            mexc_df = get_mexc_ohlcv(mexc_symbol, tf_modes["mexc"])
+            scan_exchange("🔴 MEXC", mexc_df, coin, tf_name)
 
-        # 2. Скануємо BINGX
-        bingx_symbol = f"{coin}/USDT"
-        bingx_df = get_bingx_ohlcv(bingx_symbol, tf="1h")
-        scan_exchange("🔵 BINGX", bingx_df, f"{coin} (1H)")
+            # 2. Сканування BINGX
+            bingx_symbol = f"{coin}/USDT"
+            bingx_df = get_bingx_ohlcv(bingx_symbol, tf_modes["bingx"])
+            scan_exchange("🔵 BINGX", bingx_df, coin, tf_name)
 
-        # Пауза 1 секунда між монетами, щоб уникнути лімітів API
-        time.sleep(1)
+            # Коротка пауза, щоб уникнути спам-блокувань від API бірж
+            time.sleep(0.5)
 
 
-# ======================
-# BOT LOOP
-# ======================
 def bot_loop():
-    # Тестове повідомлення відобразить весь твій новий список
-    send_telegram("🚀 Бот успішно запущений на Render і сканує монети: " + ", ".join(COINS))
+    send_telegram_text("🚀 Бот успішно запущений на Render!\nСканую 18 монет на таймфреймах: 1H, 2H, 4H.")
 
     while True:
         try:
@@ -224,7 +222,7 @@ def bot_loop():
 
 
 # ======================
-# FLASK FOR RENDER
+# FLASK SERVER
 # ======================
 app = Flask(__name__)
 
@@ -232,10 +230,7 @@ app = Flask(__name__)
 def home():
     return "Bot is running"
 
-threading.Thread(
-    target=bot_loop,
-    daemon=True
-).start()
+threading.Thread(target=bot_loop, daemon=True).start()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
